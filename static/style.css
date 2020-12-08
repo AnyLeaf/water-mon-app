@@ -1,0 +1,23 @@
+body {
+    font-family: Georgia, serif;
+    background-color: #cfebff;
+}
+
+.reading-area {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.reading-label {
+    margin-top: 60px;
+    color: #555555;
+}
+
+.reading-val {
+    margin-top: 6px;
+    padding-top: 0;
+    color: #222222;
+    font-family: Verdana, sans-serif;
+}

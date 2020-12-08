@@ -4,6 +4,11 @@
 #[macro_use]
 extern crate rocket;
 
+use serde::Serialize;
+use serde_json;
+
+use rocket_contrib::serve::{StaticFiles};
+
 use std::{convert::TryInto, io};
 
 use serialport::{self, SerialPortType};
@@ -19,7 +24,7 @@ const ERROR_BIT: u8 = 20;
 
 /// We use SensorError on results from the `WaterMonitor` struct.
 /// `SensorError` and `Readings` are copied directly from the Rust drivers.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize)]
 pub enum SensorError {
     Bus,          // eg an I2C or SPI error
     NotConnected, // todo
@@ -36,7 +41,7 @@ pub fn bytes_to_float(bytes: &[u8]) -> f32 {
     f32::from_bits(u32::from_ne_bytes(bytes))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Readings {
     pub T: Result<f32, SensorError>,
     pub pH: Result<f32, SensorError>,
@@ -70,7 +75,7 @@ impl Readings {
         }
 
         if buf[15] == OK_BIT {
-            result.ec = Ok(bytes_to_float(&buf[16..29]));
+            result.ec = Ok(bytes_to_float(&buf[16..20]));
         }
 
         result
@@ -112,9 +117,6 @@ impl WaterMonitor {
         let mut rx_buf = [0; 20];
         self.ser.read(&mut rx_buf)?;
 
-        println!("RX BUF: {:?}", &rx_buf);
-        println!("READING: {:?}", Readings::from_bytes(&rx_buf));
-
         Ok(Readings::from_bytes(&rx_buf))
     }
 
@@ -122,17 +124,27 @@ impl WaterMonitor {
     pub fn close(&mut self) {}
 }
 
-#[get("/")]
-fn hello() -> String {
-    String::from("Hello, world!") + &format!("{:?}", serialport::available_ports())
-}
-
-fn main() {
+#[get("/readings")]
+fn readings() -> String {
+    // todo: Don't re-open this every time.
     let water_monitor = WaterMonitor::new();
 
     if let Ok(mut wm) = water_monitor {
-        wm.read_all().expect("Problem taking readings");
+        let readings = wm.read_all().expect("Problem taking readings");
+
+        wm.close();
+
+        return serde_json::to_string(&readings).unwrap_or("Problem taking readings".into())
     }
 
-    rocket::ignite().mount("/", routes![hello]).launch();
+    "Error taking readings".into()
+
+}
+
+fn main() {
+    rocket::ignite()
+        .mount("/", StaticFiles::from("static"))
+        .mount("/api", routes![readings])
+
+        .launch();
 }
