@@ -3,6 +3,21 @@ body {
     background-color: #cfebff;
 }
 
+/*@media (min-width: 800px) {*/
+.readings-layout {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
+}
+/*}*/
+
+/*@media (max-width: 800px) {*/
+/*    .readings-layout {*/
+/*        display: flex;*/
+/*        flex-direction: column;*/
+/*    }*/
+/*}*/
+
 .reading-area {
     display: flex;
     flex-direction: column;
@@ -13,6 +28,8 @@ body {
 .reading-label {
     margin-top: 60px;
     color: #555555;
+    font-size: 2em;
+    text-align: center;
 }
 
 .reading-val {
@@ -20,5 +37,5 @@ body {
     padding-top: 0;
     color: #222222;
     font-family: Verdana, sans-serif;
-    font-size: 2em;
+    font-size: 3em;
 }

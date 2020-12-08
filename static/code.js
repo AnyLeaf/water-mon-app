@@ -2,7 +2,10 @@ function format(val, precision) {
     // Format as a string, rounded and 0-padded
     let result = Math.round(val * 10**precision) / 10**precision
 
-    return result.toString()
+    // Fill to the specified precision
+    const dec = result.toString().split('.')[1]
+    const len = dec && dec.length > precision ? dec.length : precision
+    return Number(result).toFixed(len)
 }
 
 function update_readings() {

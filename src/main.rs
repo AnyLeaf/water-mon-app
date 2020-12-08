@@ -15,6 +15,8 @@ use rocket_contrib::serve::StaticFiles;
 
 use std::{convert::TryInto, io, time::{Duration, Instant}};
 
+use chrono;
+
 use local_ipaddress;
 use serialport::{self, SerialPortType};
 
@@ -116,8 +118,7 @@ impl WaterMonitor {
                     if let Some(sn) = &info.serial_number {
                         if sn == "WM" {
                             return Ok(Self {
-                                ser: serialport::open(&port.port_name)
-                                    .expect("Problem opening the serial port."),
+                                ser: serialport::open(&port.port_name)?,
                             });
                         }
                     }
@@ -150,13 +151,21 @@ impl WaterMonitor {
 fn view_readings() -> String {
     let last_update = unsafe { LAST_UPDATE.as_ref().unwrap() };
 
+    // Only update the readings from the WM if we're past the last updated thresh.
     if (Instant::now() - *last_update) > Duration::new(0, REFRESH_INTERVAL * 1_000_000) {
-        get_readings().unwrap();
+
+        if let Err(_) =  get_readings() {
+            // todo: Is this normal? Seems harmless, but I'd like to
+            // todo get to the bottom of it.
+            // println!("Problem getting readings; sending old.")
+        }
+
         unsafe { LAST_UPDATE = Some(Instant::now()) };
     }
 
     let readings = unsafe { &READINGS.as_ref().unwrap() };
     return serde_json::to_string(readings).unwrap_or("Problem taking readings".into());
+    // return serde_json::to_string(readings).unwrap_or("Problem taking readings".into());
 }
 
 /// Request readings from the Water Monitor over USB/serial. Cache them as a
@@ -186,9 +195,9 @@ fn main() {
     unsafe { LAST_UPDATE = Some(Instant::now()) };
 
     println!(
-        "AnyLeaf Water Monitor app launched. You can connect by opening `localhost` in a \
+        "The AnyLeaf Water Monitor app launched. You can connect by opening `localhost` in a \
     web browser on this computer, or by navigating to `{}` on another device on this network, \
-    like your phone.",
+    like your phone.\n",
         local_ipaddress::get().unwrap_or("(Problem finding IP address)".into())
     );
 
