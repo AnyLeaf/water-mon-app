@@ -39,7 +39,7 @@
                 class="reading-area"
                 style="grid-row: 2/3; grid-column: 1/2 "
         >
-            <h3 class="reading-label">Temperature (°C)</h3>
+            <h3 class="reading-label">Temp (°C)</h3>
             <h2 id="temp-reading" class="reading-val">-</h2>
         </div>
 
@@ -60,6 +60,8 @@
 
 <script>
     window.onload = function() {
-        setInterval(update_readings, 2000)
+        // The calls we make on the frontend don't directly trigger a reading pull
+        // from the Water-Monitor; they get the latest the server has cached.
+        setInterval(update_readings, 500)
     }
 </script>

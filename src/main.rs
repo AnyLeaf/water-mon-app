@@ -4,13 +4,18 @@
 #[macro_use]
 extern crate rocket;
 
+use rocket::{
+    config::{Config, Environment, LoggingLevel},
+};
+
 use serde::Serialize;
 use serde_json;
 
-use rocket_contrib::serve::{StaticFiles};
+use rocket_contrib::serve::StaticFiles;
 
-use std::{convert::TryInto, io};
+use std::{convert::TryInto, io, time::{Duration, Instant}};
 
+use local_ipaddress;
 use serialport::{self, SerialPortType};
 
 // Bits for serial communication with a PC over USB.
@@ -21,6 +26,11 @@ const MSG_START_BITS: [u8; 2] = [100, 150];
 const MSG_END_BITS: [u8; 1] = [200];
 const OK_BIT: u8 = 10;
 const ERROR_BIT: u8 = 20;
+
+const REFRESH_INTERVAL: u32 = 1_000;  // Time between querying the WM for readings in ms.
+
+static mut READINGS: Option<Readings> = None;
+static mut LAST_UPDATE: Option<Instant> = None;
 
 /// We use SensorError on results from the `WaterMonitor` struct.
 /// `SensorError` and `Readings` are copied directly from the Rust drivers.
@@ -82,6 +92,17 @@ impl Readings {
     }
 }
 
+impl Default for Readings {
+    fn default() -> Self {
+        Self {
+            T: Err(SensorError::NotConnected),
+            pH: Err(SensorError::NotConnected),
+            ORP: Err(SensorError::NotConnected),
+            ec: Err(SensorError::NotConnected),
+        }
+    }
+}
+
 /// This mirrors that in the Python driver
 struct WaterMonitor {
     ser: Box<dyn serialport::SerialPort>,
@@ -105,7 +126,7 @@ impl WaterMonitor {
         }
         Err(io::Error::new(
             io::ErrorKind::Other,
-            "Can't find the Water Monitor.",
+            "Can't get readings from the Water Monitor.",
         ))
     }
 
@@ -124,27 +145,62 @@ impl WaterMonitor {
     pub fn close(&mut self) {}
 }
 
+/// Get readings over JSON, which we've cached.
 #[get("/readings")]
-fn readings() -> String {
-    // todo: Don't re-open this every time.
+fn view_readings() -> String {
+    let last_update = unsafe { LAST_UPDATE.as_ref().unwrap() };
+
+    if (Instant::now() - *last_update) > Duration::new(0, REFRESH_INTERVAL * 1_000_000) {
+        get_readings().unwrap();
+        unsafe { LAST_UPDATE = Some(Instant::now()) };
+    }
+
+    let readings = unsafe { &READINGS.as_ref().unwrap() };
+    return serde_json::to_string(readings).unwrap_or("Problem taking readings".into());
+}
+
+/// Request readings from the Water Monitor over USB/serial. Cache them as a
+/// global variable. Requesting the readings directly from the frontend could result in
+/// conflicts, where multiple frontends are requesting readings from the WM directly
+/// in too short an interval.
+fn get_readings() -> Result<(), io::Error> {
     let water_monitor = WaterMonitor::new();
 
     if let Ok(mut wm) = water_monitor {
         let readings = wm.read_all().expect("Problem taking readings");
-
         wm.close();
-
-        return serde_json::to_string(&readings).unwrap_or("Problem taking readings".into())
+        unsafe { READINGS = Some(readings) };
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Can't find the Water Monitor.",
+        ))
     }
-
-    "Error taking readings".into()
-
 }
 
 fn main() {
-    rocket::ignite()
-        .mount("/", StaticFiles::from("static"))
-        .mount("/api", routes![readings])
+    unsafe { READINGS = Some(Readings::default()) };
 
+    get_readings().unwrap();
+    unsafe { LAST_UPDATE = Some(Instant::now()) };
+
+    println!(
+        "AnyLeaf Water Monitor app launched. You can connect by opening `localhost` in a \
+    web browser on this computer, or by navigating to `{}` on another device on this network, \
+    like your phone.",
+        local_ipaddress::get().unwrap_or("(Problem finding IP address)".into())
+    );
+
+    let config = Config::build(Environment::Staging)
+        // .address("1.2.3.4")
+        .port(80) // 80 means default, ie users can just go to localhost
+        .log_level(LoggingLevel::Critical) // Don't show the user the connections.
+        .finalize()
+        .expect("Problem setting up our custom config");
+
+    rocket::custom(config)
+        .mount("/", StaticFiles::from("static"))
+        .mount("/api", routes![view_readings])
         .launch();
 }
