@@ -1,0 +1,12 @@
+[package]
+name = "water_mon_app"
+version = "0.1.0"
+authors = ["David O'Connor <david.alan.oconnor@gmail.com>"]
+edition = "2018"
+description = "A local webserver-based app to view Water Monitor readings"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rocket = "^0.4.6"
+serialport = "^3.3.0"
