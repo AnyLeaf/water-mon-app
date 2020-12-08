@@ -4,8 +4,9 @@
 #[macro_use]
 extern crate rocket;
 
+use std::{convert::TryInto, io};
+
 use serialport::{self, SerialPortType};
-use crate::SensorError::BadMeasurement;
 
 // Bits for serial communication with a PC over USB.
 // Copy+pasted from Water Monitor main file.
@@ -25,6 +26,16 @@ pub enum SensorError {
     BadMeasurement,
 }
 
+// pub enum SerialError {};
+
+/// Convert bytes to a float
+/// Copy+pasted from `water_monitor::util`
+pub fn bytes_to_float(bytes: &[u8]) -> f32 {
+    let bytes: [u8; 4] = bytes.try_into().unwrap();
+    // todo: Be vs Le vs ne
+    f32::from_bits(u32::from_ne_bytes(bytes))
+}
+
 #[derive(Debug, Clone)]
 pub struct Readings {
     pub T: Result<f32, SensorError>,
@@ -36,35 +47,34 @@ pub struct Readings {
 impl Readings {
     /// Read a 20-byte set. Each reading is 5 bytes: 1 for ok/error, the other
     /// 4 for a float. Copy+pasted from drivers.
-    fn from_bytes(buf: &[u8]) -> Self {
+    pub fn from_bytes(buf: &[u8]) -> Self {
         let mut result = Readings {
-            // todo: These aren't sensor errors. Add new error type or variant?
-            T: Ok(0.),
-            pH: Ok(0.),
-            ORP: Ok(0.),
-            ec: Ok(0.),
+            // These errors are identified in the Water Monitor firmware, and
+            // passed explicitly with the error code to indicate this.
+            T: Err(SensorError::BadMeasurement),
+            pH: Err(SensorError::BadMeasurement),
+            ORP: Err(SensorError::BadMeasurement),
+            ec: Err(SensorError::BadMeasurement),
         };
 
         if buf[0] == OK_BIT {
-            result.T = buf[1..5].to_bits().to_ne_bytes()
+            result.T = Ok(bytes_to_float(&buf[1..5]));
         }
 
         if buf[5] == OK_BIT {
-            result.pH = buf[6..10].to_bits().to_ne_bytes()
+            result.pH = Ok(bytes_to_float(&buf[6..10]));
         }
 
         if buf[10] == OK_BIT {
-            result.ORPT = buf[11..15].to_bits().to_ne_bytes()
+            result.ORP = Ok(bytes_to_float(&buf[11..15]));
         }
 
         if buf[15] == OK_BIT {
-            result.ec = buf[16..20].to_bits().to_ne_bytes()
+            result.ec = Ok(bytes_to_float(&buf[16..29]));
         }
 
         result
     }
-
-
 }
 
 /// This mirrors that in the Python driver
@@ -73,38 +83,39 @@ struct WaterMonitor {
 }
 
 impl WaterMonitor {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, io::Error> {
         if let Ok(ports) = serialport::available_ports() {
             for port in &ports {
                 if let SerialPortType::UsbPort(info) = &port.port_type {
                     if let Some(sn) = &info.serial_number {
                         if sn == "WM" {
-                            return Self {
+                            return Ok(Self {
                                 ser: serialport::open(&port.port_name)
                                     .expect("Problem opening the serial port."),
-                            };
+                            });
                         }
                     }
                 }
             }
         }
-        panic!("Unable to find the Water Monitor. Is it plugged in?");
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Can't find the Water Monitor.",
+        ))
     }
 
-    pub fn read_all(&mut self) -> Readings {
-
+    pub fn read_all(&mut self) -> Result<Readings, io::Error> {
         let xmit_buf = &[100, 150, 200]; // todo: Don't hard code it like this.
 
-        self.ser.write(xmit_buf).expect("Problem writing data");
+        self.ser.write(xmit_buf)?;
 
-        let mut rx_buf = &[];
-        self.ser.read(&mut rx_buf).expect("Problem reading data");
+        let mut rx_buf = [0; 20];
+        self.ser.read(&mut rx_buf)?;
 
         println!("RX BUF: {:?}", &rx_buf);
-        println!("READING: {:?}", Readings::from_bytes(rx_buf));
+        println!("READING: {:?}", Readings::from_bytes(&rx_buf));
 
-        Readings::from_bytes(rx_buf)
-
+        Ok(Readings::from_bytes(&rx_buf))
     }
 
     /// Close the serial port
@@ -117,7 +128,11 @@ fn hello() -> String {
 }
 
 fn main() {
-    let mut wm = WaterMonitor::new();
+    let water_monitor = WaterMonitor::new();
+
+    if let Ok(mut wm) = water_monitor {
+        wm.read_all().expect("Problem taking readings");
+    }
 
     rocket::ignite().mount("/", routes![hello]).launch();
 }
