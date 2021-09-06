@@ -49,8 +49,7 @@ pub enum SensorError {
 /// Copy+pasted from `water_monitor::util`
 pub fn bytes_to_float(bytes: &[u8]) -> f32 {
     let bytes: [u8; 4] = bytes.try_into().unwrap();
-    // todo: Be vs Le vs ne
-    f32::from_bits(u32::from_ne_bytes(bytes))
+    f32::from_bits(u32::from_be_bytes(bytes))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -176,11 +175,13 @@ fn get_readings() -> Result<(), io::Error> {
     let water_monitor = WaterMonitor::new();
 
     if let Ok(mut wm) = water_monitor {
-        let readings = wm.read_all().expect("Problem taking readings");
+        let readings = wm.read_all().unwrap_or_default();
         wm.close();
+        // println!("readings: {:?}", &readings);
         unsafe { READINGS = Some(readings) };
         Ok(())
     } else {
+        // println!("Can't find water monitor"); // Debugging.
         Err(io::Error::new(
             io::ErrorKind::Other,
             "Can't find the Water Monitor.",
@@ -190,8 +191,6 @@ fn get_readings() -> Result<(), io::Error> {
 
 fn main() {
     unsafe { READINGS = Some(Readings::default()) };
-
-    get_readings().unwrap();
     unsafe { LAST_UPDATE = Some(Instant::now()) };
 
     println!(
