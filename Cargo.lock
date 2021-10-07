@@ -1234,7 +1234,7 @@ checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "water_mon_app"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "local_ipaddress",

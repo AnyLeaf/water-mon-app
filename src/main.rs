@@ -4,16 +4,18 @@
 #[macro_use]
 extern crate rocket;
 
-use rocket::{
-    config::{Config, Environment, LoggingLevel},
-};
+use rocket::config::{Config, Environment, LoggingLevel};
 
 use serde::Serialize;
 use serde_json;
 
 use rocket_contrib::serve::StaticFiles;
 
-use std::{convert::TryInto, io, time::{Duration, Instant}};
+use std::{
+    convert::TryInto,
+    io,
+    time::{Duration, Instant},
+};
 
 use chrono;
 
@@ -29,7 +31,7 @@ const MSG_END_BITS: [u8; 1] = [200];
 const OK_BIT: u8 = 10;
 const ERROR_BIT: u8 = 20;
 
-const REFRESH_INTERVAL: u32 = 1_000;  // Time between querying the WM for readings in ms.
+const REFRESH_INTERVAL: u32 = 1_000; // Time between querying the WM for readings in ms.
 
 static mut READINGS: Option<Readings> = None;
 static mut LAST_UPDATE: Option<Instant> = None;
@@ -152,8 +154,7 @@ fn view_readings() -> String {
 
     // Only update the readings from the WM if we're past the last updated thresh.
     if (Instant::now() - *last_update) > Duration::new(0, REFRESH_INTERVAL * 1_000_000) {
-
-        if let Err(_) =  get_readings() {
+        if let Err(_) = get_readings() {
             // todo: Is this normal? Seems harmless, but I'd like to
             // todo get to the bottom of it.
             // println!("Problem getting readings; sending old.")
