@@ -23,27 +23,156 @@ use local_ipaddress;
 use serialport::{self, SerialPortType};
 
 // Bits for serial communication with a PC over USB.
-// Copy+pasted from Water Monitor main file.
-const SUCCESS_MSG: [u8; 3] = [50, 50, 50]; // Send this to indicate an error.
-const ERROR_MSG: [u8; 3] = [99, 99, 99]; // Send this to indicate an error.
-const MSG_START_BITS: [u8; 2] = [100, 150];
-const MSG_END_BITS: [u8; 1] = [200];
-const OK_BIT: u8 = 10;
-const ERROR_BIT: u8 = 20;
+// Copy+pasted from `quadcopter::protocols::usb
+static mut CRC_LUT: [u8; 256] = [0; 256];
+const CRC_POLY: u8 = 0xab;
 
-const REFRESH_INTERVAL: u32 = 1_000; // Time between querying the WM for readings in ms.
+const PARAMS_SIZE: usize = 76; // + message type, payload len, and crc.
+const CONTROLS_SIZE: usize = 18; // + message type, payload len, and crc.
+
+const MAX_PAYLOAD_SIZE: usize = PARAMS_SIZE; // For Params.
+const MAX_PACKET_SIZE: usize = MAX_PAYLOAD_SIZE + 3; // + message type, payload len, and crc.
+
+struct DecodeError {}
+
+const REFRESH_INTERVAL: u32 = 200; // Time between querying the FC for readings in ms.
 
 static mut READINGS: Option<Readings> = None;
-static mut LAST_UPDATE: Option<Instant> = None;
+static mut LAST_ATTITUDE_UPDATE: Option<Instant> = None;
+static mut LAST_CONTROLS_UPDATE: Option<Instant> = None;
 
-/// We use SensorError on results from the `WaterMonitor` struct.
-/// `SensorError` and `Readings` are copied directly from the Rust drivers.
-#[derive(Copy, Clone, Debug, Serialize)]
-pub enum SensorError {
-    Bus,          // eg an I2C or SPI error
-    NotConnected, // todo
-    BadMeasurement,
+#[derive(Clone, Copy, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u8)]
+/// Repr is how this type is passed as serial.
+pub enum MsgType {
+    /// Transmit from FC
+    Params = 0,
+    SetMotorDirs = 1,
+    /// Receive to FC
+    ReqParams = 2,
+    /// Acknowledgement, eg in response to setting something.
+    Ack = 3,
+    /// Controls data (From FC)
+    Controls = 4,
+    /// Request controls data. (From PC)
+    ReqControls = 5,
 }
+
+impl MsgType {
+    pub fn payload_size(&self) -> usize {
+        match self {
+            Self::Params => PARAMS_SIZE,
+            Self::SetMotorDirs => 1, // Packed bits: motors 1-4, R-L. True = CW.
+            Self::ReqParams => 0,
+            Self::Ack => 0,
+            Self::Controls => CONTROLS_SIZE,
+            Self::ReqControls => 0,
+        }
+    }
+}
+
+pub struct Packet {
+    message_type: MsgType,
+    payload_size: usize,
+    payload: [u8; MAX_PAYLOAD_SIZE], // todo?
+    crc: u8,
+}
+
+/// Represents channel data in our end-use format.
+#[derive(Default)]
+pub struct ChannelData {
+    /// Aileron, -1. to 1.
+    pub roll: f32,
+    /// Elevator, -1. to 1.
+    pub pitch: f32,
+    /// Throttle, 0. to 1., or -1. to 1. depending on if stick auto-centers.
+    pub throttle: f32,
+    /// Rudder, -1. to 1.
+    pub yaw: f32,
+    pub arm_status: ArmStatus,
+    pub input_mode: InputModeSwitch,
+    pub alt_hold: AltHoldSwitch,
+    // todo: Auto-recover commanded, auto-TO/land/RTB, obstacle avoidance etc.
+}
+
+/// Represents a first-order status of the drone. todo: What grid/reference are we using?
+#[derive(Default)]
+pub struct Params {
+    // todo: Do we want to use this full struct, or store multiple (3+) instantaneous ones?
+    pub s_x: f32,
+    pub s_y: f32,
+    // Note that we only need to specify MSL vs AGL for position; velocity and accel should
+    // be equiv for them.
+    pub s_z_msl: f32,
+    pub s_z_agl: f32,
+
+    pub s_pitch: f32,
+    pub s_roll: f32,
+    pub s_yaw: f32,
+
+    // Velocity
+    pub v_x: f32,
+    pub v_y: f32,
+    pub v_z: f32,
+
+    pub v_pitch: f32,
+    pub v_roll: f32,
+    pub v_yaw: f32,
+
+    // Acceleration
+    pub a_x: f32,
+    pub a_y: f32,
+    pub a_z: f32,
+
+    pub a_pitch: f32,
+    pub a_roll: f32,
+    pub a_yaw: f32,
+}
+
+
+// End C+P
+
+// Code in this section is a reverse of buffer <--> struct conversion in `usb_cfg`.
+
+impl From<[u8; PARAMS_SIZE]> for Params {
+    /// 19 f32s x 4 = 76. In the order we have defined in the struct.
+    fn from(p: &[u8]) -> Self {
+        Params {
+            s_x: bytes_to_float(p[0..4]),
+            s_y: bytes_to_float(p[0..4]),
+            s_z_msl: bytes_to_float(p[0..4]),
+            s_z_agl: bytes_to_float(p[0..4]),
+        
+            s_pitch: bytes_to_float(p[0..4]),
+            s_roll: bytes_to_float(p[0..4]),
+            s_yaw: bytes_to_float(p[0..4]),
+
+            v_x: bytes_to_float(p[0..4]),
+            v_y: bytes_to_float(p[0..4]),
+            v_z: bytes_to_float(p[0..4]),
+        
+            v_pitch: bytes_to_float(p[0..4]),
+            v_roll: bytes_to_float(p[0..4]),
+            v_yaw: bytes_to_float(p[0..4]),
+        
+            a_x: bytes_to_float(p[0..4]),
+            a_y: bytes_to_float(p[0..4]),
+            a_z: bytes_to_float(p[0..4]),
+        
+            a_pitch: bytes_to_float(p[0..4]),
+            a_roll: bytes_to_float(p[0..4]),
+            a_yaw: bytes_to_float(p[0..4]),
+        }
+
+    }
+}
+
+
+// End code reversed from `quadcopter`.
+
+// todo: Baud cfg?
+
+
 
 // pub enum SerialError {};
 
